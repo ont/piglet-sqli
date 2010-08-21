@@ -4,6 +4,7 @@ from urllib  import quote_plus
 from urllib2 import urlopen
 from Queue     import Queue
 from threading import Thread
+from datetime  import datetime
 
 p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...' )
 p.add_argument( '-u' , '--url'              , required = True          , help = 'url with possible GET data'      )
@@ -29,10 +30,14 @@ if args.post and '@' in args.post and '@' in args.url:
 class Searcher( object ):
     def __init__( self, **kargs ):
         self.__dict__.update( kargs )
+        self.log_file = open( 'piglet.log', 'a' )
+        self.log_file.write( '\n---------[%s]--------\n' % datetime.now() )
 
     def log( self, lvl, txt, newline = True ):
         if lvl <= self.log_lvl:
-            sys.stdout.write( txt + ( newline and '\n' or '' ) )
+            s = txt + ( newline and '\n' or '' )
+            self.log_file.write( s )
+            sys.stdout.write( s )
             sys.stdout.flush()
 
     def test( self, sql ):

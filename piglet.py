@@ -11,9 +11,10 @@ p.add_argument( '-u' , '--url'              , required = True          , help = 
 p.add_argument( '-p' , '--post'             , metavar = 'POST'         , help = 'to send POST data use this var'  )
 p.add_argument( '-c' , '--cookie'           , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET' )
 p.add_argument( '-s' , '--string'           , required = True          , help = 'string to search on the page'    )
-p.add_argument( '-e' , '--engine'           , default = 'mysql', choices = ['mysql', 'postgres'], help = 'engine of database'  )
 p.add_argument( '-v' , '--verbose'          , action = 'append_const' , const = 1, default = [],  help = 'how much verbose should be output' )
 p.add_argument( '-a' , '--avoid'            , default = ''             , help = 'string of characters wich should be avoided in sql queries' )
+p.add_argument( '-e' , '--error2false'      , action = 'store_const', const = True, help = 'if server return error identify this fact as false answer for SQL query' )
+p.add_argument( '-E' , '--engine'           , default = 'mysql', choices = ['mysql', 'postgres'], help = 'engine of database'  )
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
 p.add_argument( '-T' , metavar = 'TABLE'    , help = 'table to use'    )
 p.add_argument( '-U' , metavar = 'TABLE'    , help = 'username to use' )
@@ -45,12 +46,16 @@ class Searcher( object ):
     def test( self, sql ):
         url  = self.url.replace( '@', quote_plus( sql ) )
         post = self.post and self.post.replace( '@', quote_plus( sql ) )
-        self.log( 2, '...testing url=%s POST=%s' % ( url, post ) )
+        try:
+            html = urlopen( url, post ).read()
+            self.log( 2, '...testing url=%s POST=%s --> %s' % ( url, post, self.sss in html ) )
+            self.log( 3, '----html----\n%s\n----html----\n' % html )
+            return self.sss in html
+        except Exception, e:
+            if args.error2false:
+                return False
+            raise e
 
-        html = urlopen( url, post ).read()
-        self.log( 3, '----html----\n%s\n----html----\n' % html )
-
-        return self.sss in html
 
 
     def get_number( self, sql, lmin = None, lmax = None ):

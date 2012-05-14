@@ -83,10 +83,12 @@ class API( object ):
                     code = e.getcode()
                     html = e.read()
                     self.log( 3, '[D] HTML SERVER ANSWER:\n' + html )
-                except urllib2.URLError, e:
+                except Exception, e:
+                    if type( e ) is KeyboardInterrupt:  ## ouch we catch non-http error
+                        raise e                         ## re-raising it...
                     code = None
                     tsleep   *= 2   ## double time to sleep
-                    self.log( 0, '[E] TIME OUT --> sleeping for %s seconds...' % tsleep )
+                    self.log( 0, '[E] TIME OUT / OTHER ERROR --> sleeping for %s seconds...' % tsleep )
 
                 if code is not None:
                     break               ## go out from for loop...
@@ -297,7 +299,7 @@ class DBlind( API ):
     def dih( self, sss, s = 32, e = 126 ):
         while e - s > 0:
             m = ( e + s ) / 2
-            tsss = '%s between(%s)and(%s)' % ( sss, s, m )
+            tsss = '(%s)between(%s)and(%s)' % ( sss, s, m )
             tsss = sql.prepare( tsss )                      ## TODO: warn!!! possible bugs ??
             self.log( 2, '[D] testing: %s' % tsss )
 

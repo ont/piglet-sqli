@@ -285,7 +285,7 @@ class DUnion( API ):
         sss = "CONCAT(0x424141414142,(%s),0x424141414142)" % sss
         sss = sql.prepare( sss )
         c, h = self.html( sss )
-        m = re.search( 'BAAAAB(.*)BAAAAB', h )
+        m = re.search( 'BAAAAB(.*?)BAAAAB', h )
         return m and m.group( 1 )
 
     def run( self ):
